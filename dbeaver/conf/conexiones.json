@@ -12,7 +12,7 @@
         "database": "GNBPE_DATAHUB",
         "type": "dev",
         "auth-model": "native",
-        "auth-properties": { "userName": "datahub", "userPassword": "DataHub_2026.App" },
+        "auth-properties": { "userName": "datahub", "userPassword": "Etl_Gnbpe_2026.Pw" },
         "properties": { "encrypt": "true", "trustServerCertificate": "true" }
       }
     },
@@ -27,7 +27,7 @@
         "database": "GNBPE_DATAHUB",
         "type": "dev",
         "auth-model": "native",
-        "auth-properties": { "userName": "datahub", "userPassword": "DataHub_2026.App" }
+        "auth-properties": { "userName": "datahub", "userPassword": "Etl_Gnbpe_2026.Pw" }
       }
     },
     "mysql-dev": {
@@ -41,7 +41,7 @@
         "database": "GNBPE_DATAHUB",
         "type": "dev",
         "auth-model": "native",
-        "auth-properties": { "userName": "datahub", "userPassword": "DataHub_2026.App" },
+        "auth-properties": { "userName": "datahub", "userPassword": "Etl_Gnbpe_2026.Pw" },
         "properties": { "allowPublicKeyRetrieval": "true", "useSSL": "false" }
       }
     },
@@ -56,7 +56,7 @@
         "database": "GNBPE_DATAHUB",
         "type": "dev",
         "auth-model": "native",
-        "auth-properties": { "userName": "datahub", "userPassword": "DataHub_2026.App" }
+        "auth-properties": { "userName": "datahub", "userPassword": "Etl_Gnbpe_2026.Pw" }
       }
     },
     "sqlite-dev": {

@@ -15,8 +15,8 @@ docker compose ps        # esperar "healthy"
 | Desde otro contenedor en `mariadb-net` | `mariadb-dev:3306` |
 
 ```
-mariadb+mariadbconnector://datahub:DataHub_2026.App@localhost:3308/GNBPE_DATAHUB
-mysql+pymysql://datahub:DataHub_2026.App@localhost:3308/GNBPE_DATAHUB?charset=utf8mb4
+mariadb+mariadbconnector://datahub:Etl_Gnbpe_2026.Pw@localhost:3308/GNBPE_DATAHUB
+mysql+pymysql://datahub:Etl_Gnbpe_2026.Pw@localhost:3308/GNBPE_DATAHUB?charset=utf8mb4
 jdbc:mariadb://localhost:3308/GNBPE_DATAHUB
 ```
 Consola: `docker exec -it mariadb-dev mariadb -u datahub -p GNBPE_DATAHUB`

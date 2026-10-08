@@ -15,7 +15,7 @@ mongo-express (opcional): `docker compose --profile tools up -d` -> http://local
 | Desde otro contenedor en `mongodb-net` | `mongodb-dev:27017` |
 
 ```
-mongodb://datahub:DataHub_2026.App@localhost:27017/GNBPE_DATAHUB?authSource=GNBPE_DATAHUB    # pymongo / Compass
+mongodb://datahub:Etl_Gnbpe_2026.Pw@localhost:27017/GNBPE_DATAHUB?authSource=GNBPE_DATAHUB    # pymongo / Compass
 ```
 Consola: `docker exec -it mongodb-dev mongosh -u datahub -p --authenticationDatabase GNBPE_DATAHUB GNBPE_DATAHUB`
 

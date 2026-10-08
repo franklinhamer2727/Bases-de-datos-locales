@@ -27,11 +27,12 @@ ENV PATH="/opt/mssql-tools18/bin:${PATH}"
 
 COPY init/ /usr/src/init/
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
+COPY verificar.sh /usr/local/bin/verificar.sh
 
 # Quitar CRLF: si el repo se clona en Windows con autocrlf, un entrypoint con
 # \r\n falla con "no such file or directory" (el shebang queda "bash\r").
-RUN sed -i 's/\r$//' /usr/local/bin/entrypoint.sh /usr/src/init/*.sql \
- && chmod 0755 /usr/local/bin/entrypoint.sh \
+RUN sed -i 's/\r$//' /usr/local/bin/entrypoint.sh /usr/local/bin/verificar.sh /usr/src/init/*.sql \
+ && chmod 0755 /usr/local/bin/entrypoint.sh /usr/local/bin/verificar.sh \
  && chown -R mssql:root /usr/src/init
 
 # La imagen corre como 'mssql' (uid 10001), no como root.

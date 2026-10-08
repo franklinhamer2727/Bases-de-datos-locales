@@ -1,0 +1,45 @@
+﻿**********************
+Inicio de la transcripción de Windows PowerShell
+Hora de inicio: 20261008115833
+Nombre de usuario: DESKTOP-22O557C\LENOVO
+Usuario RunAs: DESKTOP-22O557C\LENOVO
+Nombre de la configuración: 
+Máquina: DESKTOP-22O557C (Microsoft Windows NT 10.0.26200.0)
+Aplicación host: C:\WINDOWS\System32\WindowsPowerShell\v1.0\powershell.exe -ExecutionPolicy Bypass -File .\levantar.ps1
+Id. de proceso: 30500
+PSVersion: 5.1.26100.9549
+PSEdition: Desktop
+PSCompatibleVersions: 1.0, 2.0, 3.0, 4.0, 5.0, 5.1.26100.9549
+BuildVersion: 10.0.26100.9549
+CLRVersion: 4.0.30319.42000
+WSManStackVersion: 3.0
+PSRemotingProtocolVersion: 2.3
+SerializationVersion: 1.1.0.1
+**********************
+[OK]    Docker Desktop esta corriendo
+[OK]    Puerto 1433 libre
+
+Construyendo y levantando (la primera vez descarga ~1.5 GB)...
+
+Esperando a que SQL Server quede listo (hasta 5 min)...
+  [init] esperando a que el motor acepte conexiones (max 240s)...
+  [init] ejecutando 01_usuario_y_bd.sql (intento 1)
+  [init] LISTO. sa y 'datahub' (base 'GNBPE_DATAHUB') aceptan conexiones en el puerto 1433 del contenedor.
+[OK]    Contenedor healthy
+
+
+[OK]    sa y el usuario de la app entran (directo y por el puerto publicado)
+[OK]    localhost:1433 responde desde Windows
+
+================ LISTO ================
+DBeaver / SSMS / Azure Data Studio (desde Windows):
+  Host: localhost      Puerto: 1433
+  Usuario admin: sa            (password: MSSQL_SA_PASSWORD del .env)
+  Usuario app:   datahub       (password: APP_PASSWORD del .env)  Base: GNBPE_DATAHUB
+  Driver: marcar "Trust Server Certificate" = true
+CloudBeaver (http://localhost:8978): host host.docker.internal, puerto 1433
+=======================================
+**********************
+Fin de la transcripción de Windows PowerShell
+Hora de finalización: 20261008115904
+**********************

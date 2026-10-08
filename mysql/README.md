@@ -15,7 +15,7 @@ docker compose ps        # esperar "healthy"
 | Desde otro contenedor en `mysql-net` | `mysql-dev:3306` |
 
 ```
-mysql+pymysql://datahub:DataHub_2026.App@localhost:3307/GNBPE_DATAHUB?charset=utf8mb4
+mysql+pymysql://datahub:Etl_Gnbpe_2026.Pw@localhost:3307/GNBPE_DATAHUB?charset=utf8mb4
 jdbc:mysql://localhost:3307/GNBPE_DATAHUB?allowPublicKeyRetrieval=true&useSSL=false
 ```
 Consola: `docker exec -it mysql-dev mysql -u datahub -p GNBPE_DATAHUB`

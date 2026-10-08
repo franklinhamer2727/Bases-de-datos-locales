@@ -1,14 +1,17 @@
 # SQL Server 2022 (dev) — DataHub
 
-## Levantar
+## Levantar (recomendado)
 ```powershell
 cd sqlserver
-copy .env.example .env      # ajustar passwords si se desea
-docker compose up -d --build
-docker compose ps           # esperar STATUS = healthy (1-2 min el primer arranque)
-docker compose logs -f sqlserver   # lineas [init] muestran el progreso
+powershell -ExecutionPolicy Bypass -File .\levantar.ps1
 ```
-`healthy` = motor arriba + `init/*.sql` aplicados + el login de la app conecta.
+El script: revisa que el puerto este libre (si no, usa 14333 y lo guarda en `.env`), levanta el
+contenedor, espera a que quede `healthy` y **prueba el login de `sa` y de `datahub`**, tanto dentro
+del contenedor como entrando por el puerto publicado (igual que DBeaver). Todo queda en `levantar.log`.
+
+Manual: `docker compose up -d --build` y luego `docker exec sqlserver-dev verificar.sh`.
+
+Si algo falla: `powershell -ExecutionPolicy Bypass -File .\diagnostico.ps1` (genera `diagnostico.txt`).
 
 ## Conectar
 | Cliente | Valor |
@@ -25,10 +28,15 @@ DRIVER={ODBC Driver 18 for SQL Server};SERVER=localhost,1433;DATABASE=GNBPE_DATA
 ```
 Consola dentro del contenedor:
 ```powershell
-docker exec -it sqlserver-dev sqlcmd -C -S localhost -U datahub -P "DataHub_2026.App" -d GNBPE_DATAHUB
+docker exec -it sqlserver-dev sqlcmd -C -S localhost -U datahub -P "Etl_Gnbpe_2026.Pw" -d GNBPE_DATAHUB
 ```
 
 ## Notas
+- **Password de la app**: la politica de SQL Server rechaza passwords que contienen el nombre del
+  usuario (`DataHub_...` para `datahub` falla con "not complex enough"). El arranque lo valida antes.
+- **En cada arranque** el contenedor repara lo necesario: crea base/login si faltan, sincroniza la
+  password de `datahub` con el `.env`, lo desbloquea, re-mapea el usuario si quedo huerfano, y si el
+  volumen tenia otra password de `sa` intenta restablecerla a la del `.env`.
 - **Scripts de inicio**: todo `init/*.sql` se ejecuta en orden alfabetico en cada arranque, asi que deben ser idempotentes (`IF NOT EXISTS ...`). Variables disponibles: `$(APP_DB)`, `$(APP_USER)`, `$(APP_PASSWORD)`. Tras agregar uno: `docker compose up -d --build`.
 - **Password de sa**: `MSSQL_SA_PASSWORD` solo se aplica al crear el volumen. Para cambiarla despues use `ALTER LOGIN sa WITH PASSWORD = '...'` o borre el volumen. La de `APP_PASSWORD` si se re-sincroniza en cada arranque.
 - **Collation**: `MSSQL_COLLATION` tambien aplica solo en el primer arranque.

@@ -42,13 +42,13 @@ services:
           -d "$$APP_DB" -Q "SELECT 1" -b -l 3 -o /dev/null
       interval: 10s
       timeout: 5s
-      retries: 10
-      start_period: 60s
+      retries: 15
+      start_period: 90s
     stop_grace_period: 30s
     deploy:
       resources:
         limits:
-          memory: ${CONTAINER_MEMORY:-4g}
+          memory: ${CONTAINER_MEMORY:-3g}
     networks:
       - sqlserver-net
 

@@ -21,7 +21,7 @@ pgAdmin (opcional): `docker compose --profile tools up -d` -> http://localhost:5
 | Desde otro contenedor en `postgres-net` | host `postgres-dev`, puerto `5432` |
 
 ```
-postgresql://datahub:DataHub_2026.App@localhost:5432/GNBPE_DATAHUB          # psycopg / SQLAlchemy (+psycopg)
+postgresql://datahub:Etl_Gnbpe_2026.Pw@localhost:5432/GNBPE_DATAHUB          # psycopg / SQLAlchemy (+psycopg)
 jdbc:postgresql://localhost:5432/GNBPE_DATAHUB                              # Spark / DBeaver
 ```
 Consola: `docker exec -it postgres-dev psql -U datahub -d GNBPE_DATAHUB`

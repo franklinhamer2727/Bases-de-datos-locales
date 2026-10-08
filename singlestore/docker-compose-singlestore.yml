@@ -1,0 +1,57 @@
+version: '3.9'
+
+services:
+  singlestore:
+    image: memsql/quickstart:latest
+    container_name: singlestore-dev
+
+    # Variables de entorno para SingleStore
+    environment:
+      # ROOT password (usuario root de SingleStore)
+      SINGLESTORE_ROOT_PASSWORD: singlestore_root_2024
+
+      # Licencia (development por defecto)
+      LICENSE_KEY: ""  # Dejar vacío para dev, agregar si tienes licencia
+
+    # Puertos
+    ports:
+      - "3306:3306"      # MySQL protocol (para conexiones Python, etc)
+      - "8080:8080"      # Web UI (Management Studio)
+      - "9000:9000"      # Node metrics port
+
+    # Volumen para persistencia de datos
+    volumes:
+      - singlestore_data:/var/lib/memsql
+      - singlestore_logs:/var/log/memsql
+
+    # Health check
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/api/v1/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+    # Resources (ajusta según tu máquina)
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 4G
+        reservations:
+          cpus: '1'
+          memory: 2G
+
+    # Network
+    networks:
+      - singlestore-net
+
+volumes:
+  singlestore_data:
+    driver: local
+  singlestore_logs:
+    driver: local
+
+networks:
+  singlestore-net:
+    driver: bridge

@@ -1,0 +1,13 @@
+{
+  "Servers": {
+    "1": {
+      "Name": "postgres-dev (datahub)",
+      "Group": "Local",
+      "Host": "postgres-dev",
+      "Port": 5432,
+      "MaintenanceDB": "GNBPE_DATAHUB",
+      "Username": "datahub",
+      "SSLMode": "prefer"
+    }
+  }
+}

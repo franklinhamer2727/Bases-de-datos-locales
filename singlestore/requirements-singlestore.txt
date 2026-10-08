@@ -1,0 +1,41 @@
+# ============================================================================
+# DEPENDENCIAS PYTHON PARA SINGLESTORE
+# ============================================================================
+# Instalar con: pip install -r requirements-singlestore.txt
+
+# Conector MySQL nativo (RECOMENDADO)
+mysql-connector-python>=8.2.0
+
+# Conector MySQL alternativo (más rápido)
+PyMySQL>=1.1.0
+
+# SQLAlchemy (abstracción SQL)
+SQLAlchemy>=2.0.0
+
+# SQLAlchemy utilities
+sqlalchemy-utils>=0.41.0
+
+# Pandas (manipulación de datos)
+pandas>=2.0.0
+
+# PyArrow (formato columnar, para Parquet)
+pyarrow>=14.0.0
+
+# Openpyxl (para leer/escribir Excel)
+openpyxl>=3.1.0
+
+# PySpark (si usas Spark + SingleStore)
+# Nota: PySpark es grande (~200MB), instala solo si lo necesitas
+# pyspark>=3.5.0
+
+# Utilidades
+python-dotenv>=1.0.0
+tenacity>=8.2.0
+retry>=0.9.2
+
+# Logging y monitoreo
+loguru>=0.7.0
+
+# Testing (opcional)
+pytest>=7.0.0
+pytest-mysql>=2.0.0

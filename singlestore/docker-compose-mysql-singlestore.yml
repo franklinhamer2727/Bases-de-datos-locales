@@ -1,0 +1,58 @@
+version: '3.9'
+
+services:
+  singlestore:
+    # Usar MySQL oficial (compatible con SingleStore)
+    image: mysql:8.0
+    container_name: singlestore-dev
+
+    environment:
+      MYSQL_ROOT_PASSWORD: singlestore_root_2024
+      MYSQL_DATABASE: app_db
+      MYSQL_USER: app_user
+      MYSQL_PASSWORD: app_password_2024
+
+    ports:
+      - "3306:3306"
+
+    volumes:
+      - singlestore_data:/var/lib/mysql
+      - singlestore_logs:/var/log/mysql
+      - ./init-singlestore.sql:/docker-entrypoint-initdb.d/init.sql:ro
+
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-psinglestore_root_2024"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '1'
+          memory: 1G
+
+    networks:
+      - singlestore-net
+
+    # Para hacer que MySQL sea más rápido
+    command:
+      - --default-authentication-plugin=mysql_native_password
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --max_connections=1000
+      - --innodb_buffer_pool_size=1G
+
+volumes:
+  singlestore_data:
+    driver: local
+  singlestore_logs:
+    driver: local
+
+networks:
+  singlestore-net:
+    driver: bridge

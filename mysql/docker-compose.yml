@@ -1,0 +1,56 @@
+# MySQL 8.4 LTS para desarrollo local.
+#   copy .env.example .env  ->  docker compose up -d --build  ->  docker compose ps (healthy)
+name: mysql-dev
+
+services:
+  mysql:
+    build:
+      context: .
+      args:
+        MYSQL_IMAGE: ${MYSQL_IMAGE:-mysql:8.4}
+    image: bsg/mysql-datahub:8.4
+    container_name: mysql-dev
+    hostname: mysql-dev
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?defina MYSQL_ROOT_PASSWORD en .env}
+      # La imagen oficial crea la base y el usuario (con ALL sobre esa base) en el primer arranque.
+      MYSQL_DATABASE: ${APP_DB:-GNBPE_DATAHUB}
+      MYSQL_USER: ${APP_USER:-datahub}
+      MYSQL_PASSWORD: ${APP_PASSWORD:?defina APP_PASSWORD en .env}
+      TZ: ${TZ:-America/Lima}
+    command:
+      - --innodb-buffer-pool-size=${MYSQL_BUFFER_POOL:-512M}
+      - --max-connections=${MYSQL_MAX_CONNECTIONS:-200}
+    ports:
+      - "${MYSQL_PORT:-3307}:3306"     # 3307 en el host: 3306 lo usa SingleStore
+    volumes:
+      - mysql_data:/var/lib/mysql      # volumen con nombre, no carpeta de Windows
+    healthcheck:
+      # TCP (127.0.0.1) con el usuario de la app: durante la inicializacion el
+      # servidor temporal corre con --skip-networking, asi que no da "healthy"
+      # antes de tiempo (mysqladmin ping si lo haria).
+      test:
+        - CMD-SHELL
+        - >-
+          MYSQL_PWD="$$MYSQL_PASSWORD" mysql -h 127.0.0.1 -u "$$MYSQL_USER"
+          -D "$$MYSQL_DATABASE" -e "SELECT 1" >/dev/null
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 40s
+    stop_grace_period: 60s
+    deploy:
+      resources:
+        limits:
+          memory: ${CONTAINER_MEMORY:-2g}
+    networks:
+      - mysql-net
+
+volumes:
+  mysql_data:
+    name: mysql_dev_data
+
+networks:
+  mysql-net:
+    name: mysql-net

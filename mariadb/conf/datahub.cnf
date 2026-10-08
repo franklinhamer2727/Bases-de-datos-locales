@@ -1,0 +1,12 @@
+# Configuracion fija (los tamanos de memoria van en docker-compose.yml / .env)
+[mariadbd]
+character-set-server = utf8mb4
+collation-server     = utf8mb4_uca1400_ai_ci
+default-time-zone    = '-05:00'        # Lima, sin horario de verano
+skip-name-resolve
+local_infile         = 0
+slow_query_log       = 1
+long_query_time      = 1
+
+[client]
+default-character-set = utf8mb4

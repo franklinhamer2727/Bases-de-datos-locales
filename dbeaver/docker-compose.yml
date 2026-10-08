@@ -1,0 +1,52 @@
+# DBeaver en el navegador (CloudBeaver Community) con las conexiones locales
+# ya registradas.
+#   copy .env.example .env  ->  docker compose up -d --build  ->  http://localhost:8978
+name: dbeaver-dev
+
+services:
+  cloudbeaver:
+    build:
+      context: .
+      args:
+        CB_IMAGE: ${CB_IMAGE:-dbeaver/cloudbeaver:latest}
+    image: bsg/cloudbeaver-datahub:latest
+    container_name: cloudbeaver-dev
+    hostname: cloudbeaver-dev
+    restart: unless-stopped
+    environment:
+      # Con estas tres variables el servidor se configura solo (sin asistente
+      # inicial) y el admin recibe acceso a las conexiones precargadas.
+      CB_SERVER_NAME: ${CB_SERVER_NAME:-DBeaver BSG}
+      CB_SERVER_URL: http://localhost:${CB_PORT:-8978}
+      CB_ADMIN_NAME: ${CB_ADMIN_NAME:-cbadmin}
+      CB_ADMIN_PASSWORD: ${CB_ADMIN_PASSWORD:?defina CB_ADMIN_PASSWORD en .env}
+      CLOUDBEAVER_APP_ANONYMOUS_ACCESS_ENABLED: "false"
+      CLOUDBEAVER_APP_ADMIN_CREDENTIALS_SAVE_ENABLED: "true"
+      CLOUDBEAVER_APP_PUBLIC_CREDENTIALS_SAVE_ENABLED: "true"
+      # Ligero: heap acotado + GC serial (menos hilos y memoria que G1).
+      JAVA_OPTS: "${CB_JAVA_OPTS:--Xms128m -Xmx768m -XX:+UseSerialGC}"
+      TZ: ${TZ:-America/Lima}
+    ports:
+      # Solo desde esta PC (no expuesto a la red local).
+      - "127.0.0.1:${CB_PORT:-8978}:8978"
+    extra_hosts:
+      # Docker Desktop ya lo define; esto lo hace funcionar tambien en Linux.
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - cloudbeaver_workspace:/opt/cloudbeaver/workspace
+      - ../sqlite/data:/data/sqlite        # el archivo de la carpeta sqlite/
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/8978' || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+    stop_grace_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: ${CONTAINER_MEMORY:-1g}
+
+volumes:
+  cloudbeaver_workspace:
+    name: cloudbeaver_dev_workspace

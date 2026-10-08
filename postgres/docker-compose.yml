@@ -1,0 +1,101 @@
+# PostgreSQL 17 para desarrollo local.
+#   1) copy .env.example .env   (y ajuste las passwords)
+#   2) docker compose up -d --build
+#   3) docker compose ps        -> esperar STATUS "healthy"
+#   pgAdmin (opcional):  docker compose --profile tools up -d   -> http://localhost:5050
+name: postgres-dev
+
+services:
+  postgres:
+    build:
+      context: .
+      args:
+        PG_IMAGE: ${PG_IMAGE:-postgres:17-bookworm}
+    image: bsg/postgres-datahub:17
+    container_name: postgres-dev
+    hostname: postgres-dev
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?defina POSTGRES_PASSWORD en .env}
+      POSTGRES_DB: ${POSTGRES_DB:-postgres}
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C.UTF-8 --data-checksums"
+      TZ: ${TZ:-America/Lima}
+      PGTZ: ${TZ:-America/Lima}
+      APP_DB: ${APP_DB:-GNBPE_DATAHUB}
+      APP_USER: ${APP_USER:-datahub}
+      APP_PASSWORD: ${APP_PASSWORD:?defina APP_PASSWORD en .env}
+    # Ajustes razonables para una maquina de desarrollo (~4 GB para el contenedor).
+    command:
+      - postgres
+      - -c
+      - shared_buffers=${PG_SHARED_BUFFERS:-512MB}
+      - -c
+      - effective_cache_size=${PG_EFFECTIVE_CACHE_SIZE:-2GB}
+      - -c
+      - work_mem=${PG_WORK_MEM:-16MB}
+      - -c
+      - maintenance_work_mem=256MB
+      - -c
+      - max_connections=${PG_MAX_CONNECTIONS:-100}
+      - -c
+      - timezone=${TZ:-America/Lima}
+      - -c
+      - log_min_duration_statement=${PG_LOG_SLOW_MS:-1000}
+    shm_size: 256mb                # el /dev/shm de 64 MB por defecto rompe consultas paralelas grandes
+    ports:
+      - "${PG_PORT:-5432}:5432"
+    volumes:
+      # Volumen con nombre, NO carpeta de Windows: initdb falla por permisos
+      # (chmod/chown) sobre bind mounts de Windows.
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      # -h 127.0.0.1 (TCP) a proposito: durante initdb el servidor temporal solo
+      # escucha por socket, asi no se marca "healthy" antes de terminar init/.
+      test:
+        - CMD-SHELL
+        - >-
+          PGPASSWORD="$$APP_PASSWORD" psql -h 127.0.0.1 -U "$$APP_USER" -d "$$APP_DB"
+          -tAc "SELECT 1" >/dev/null
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    stop_grace_period: 60s         # deja terminar el checkpoint al apagar
+    deploy:
+      resources:
+        limits:
+          memory: ${CONTAINER_MEMORY:-4g}
+    networks:
+      - postgres-net
+
+  pgadmin:
+    image: dpage/pgadmin4:9
+    container_name: pgadmin-dev
+    profiles: ["tools"]            # solo arranca con --profile tools
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL:-admin@example.com}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:?defina PGADMIN_PASSWORD en .env}
+      PGADMIN_CONFIG_SERVER_MODE: "False"
+      PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: "False"
+    ports:
+      - "${PGADMIN_PORT:-5050}:80"
+    volumes:
+      - ./pgadmin/servers.json:/pgadmin4/servers.json:ro
+      - pgadmin_data:/var/lib/pgadmin
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - postgres-net
+
+volumes:
+  pg_data:
+    name: postgres_dev_data
+  pgadmin_data:
+    name: postgres_dev_pgadmin
+
+networks:
+  postgres-net:
+    name: postgres-net

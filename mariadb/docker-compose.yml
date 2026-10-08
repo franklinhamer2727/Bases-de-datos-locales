@@ -1,0 +1,51 @@
+# MariaDB 11.4 LTS para desarrollo local.
+#   copy .env.example .env  ->  docker compose up -d --build  ->  docker compose ps (healthy)
+name: mariadb-dev
+
+services:
+  mariadb:
+    build:
+      context: .
+      args:
+        MARIADB_IMAGE: ${MARIADB_IMAGE:-mariadb:11.4}
+    image: bsg/mariadb-datahub:11.4
+    container_name: mariadb-dev
+    hostname: mariadb-dev
+    restart: unless-stopped
+    environment:
+      MARIADB_ROOT_PASSWORD: ${MARIADB_ROOT_PASSWORD:?defina MARIADB_ROOT_PASSWORD en .env}
+      MARIADB_DATABASE: ${APP_DB:-GNBPE_DATAHUB}
+      MARIADB_USER: ${APP_USER:-datahub}
+      MARIADB_PASSWORD: ${APP_PASSWORD:?defina APP_PASSWORD en .env}
+      MARIADB_AUTO_UPGRADE: "1"        # al subir de version menor, actualiza tablas de sistema solo
+      TZ: ${TZ:-America/Lima}
+    command:
+      - --innodb-buffer-pool-size=${MARIADB_BUFFER_POOL:-512M}
+      - --max-connections=${MARIADB_MAX_CONNECTIONS:-200}
+    ports:
+      - "${MARIADB_PORT:-3308}:3306"   # 3306 SingleStore, 3307 MySQL
+    volumes:
+      - mariadb_data:/var/lib/mysql
+    healthcheck:
+      # Script oficial de la imagen: --connect solo pasa cuando el servidor
+      # escucha por red (despues de la inicializacion).
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 40s
+    stop_grace_period: 60s
+    deploy:
+      resources:
+        limits:
+          memory: ${CONTAINER_MEMORY:-2g}
+    networks:
+      - mariadb-net
+
+volumes:
+  mariadb_data:
+    name: mariadb_dev_data
+
+networks:
+  mariadb-net:
+    name: mariadb-net

@@ -1,0 +1,78 @@
+# MongoDB 8.0 para desarrollo local.
+#   copy .env.example .env  ->  docker compose up -d --build  ->  docker compose ps (healthy)
+#   mongo-express (opcional): docker compose --profile tools up -d  ->  http://localhost:8081
+name: mongodb-dev
+
+services:
+  mongodb:
+    build:
+      context: .
+      args:
+        MONGO_IMAGE: ${MONGO_IMAGE:-mongo:8.0}
+    image: bsg/mongodb-datahub:8.0
+    container_name: mongodb-dev
+    hostname: mongodb-dev
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USER:-root}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:?defina MONGO_ROOT_PASSWORD en .env}
+      MONGO_INITDB_DATABASE: ${APP_DB:-GNBPE_DATAHUB}
+      APP_DB: ${APP_DB:-GNBPE_DATAHUB}
+      APP_USER: ${APP_USER:-datahub}
+      APP_PASSWORD: ${APP_PASSWORD:?defina APP_PASSWORD en .env}
+      TZ: ${TZ:-America/Lima}
+    # Sin limite, WiredTiger toma ~50% de la RAM de la VM de Docker.
+    command: ["--wiredTigerCacheSizeGB", "${MONGO_CACHE_GB:-1}"]
+    ports:
+      - "${MONGO_PORT:-27017}:27017"
+    volumes:
+      - mongo_data:/data/db
+      - mongo_config:/data/configdb
+    healthcheck:
+      # Contra el hostname (no 127.0.0.1): el mongod temporal de la
+      # inicializacion solo escucha en localhost, asi "healthy" llega despues.
+      test:
+        - CMD-SHELL
+        - >-
+          mongosh --quiet --host "$$(hostname)" -u "$$APP_USER" -p "$$APP_PASSWORD"
+          --authenticationDatabase "$$APP_DB"
+          --eval "quit(db.adminCommand({ping:1}).ok ? 0 : 1)"
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 40s
+    stop_grace_period: 60s
+    deploy:
+      resources:
+        limits:
+          memory: ${CONTAINER_MEMORY:-2g}
+    networks:
+      - mongodb-net
+
+  mongo-express:
+    image: mongo-express:1
+    container_name: mongo-express-dev
+    profiles: ["tools"]
+    restart: unless-stopped
+    environment:
+      ME_CONFIG_MONGODB_URL: mongodb://${MONGO_ROOT_USER:-root}:${MONGO_ROOT_PASSWORD}@mongodb-dev:27017/?authSource=admin
+      ME_CONFIG_BASICAUTH: "true"
+      ME_CONFIG_BASICAUTH_USERNAME: ${ME_USER:-admin}
+      ME_CONFIG_BASICAUTH_PASSWORD: ${ME_PASSWORD:?defina ME_PASSWORD en .env}
+    ports:
+      - "${ME_PORT:-8081}:8081"
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    networks:
+      - mongodb-net
+
+volumes:
+  mongo_data:
+    name: mongodb_dev_data
+  mongo_config:
+    name: mongodb_dev_config
+
+networks:
+  mongodb-net:
+    name: mongodb-net

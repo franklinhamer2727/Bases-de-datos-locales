@@ -1,0 +1,88 @@
+{
+  "folders": {},
+  "connections": {
+    "sqlserver-dev": {
+      "provider": "sqlserver",
+      "driver": "microsoft",
+      "name": "SQL Server 2022 (dev)",
+      "save-password": true,
+      "configuration": {
+        "host": "host.docker.internal",
+        "port": "1433",
+        "database": "GNBPE_DATAHUB",
+        "type": "dev",
+        "auth-model": "native",
+        "auth-properties": { "userName": "datahub", "userPassword": "DataHub_2026.App" },
+        "properties": { "encrypt": "true", "trustServerCertificate": "true" }
+      }
+    },
+    "postgres-dev": {
+      "provider": "postgresql",
+      "driver": "postgres-jdbc",
+      "name": "PostgreSQL 17 (dev)",
+      "save-password": true,
+      "configuration": {
+        "host": "host.docker.internal",
+        "port": "5432",
+        "database": "GNBPE_DATAHUB",
+        "type": "dev",
+        "auth-model": "native",
+        "auth-properties": { "userName": "datahub", "userPassword": "DataHub_2026.App" }
+      }
+    },
+    "mysql-dev": {
+      "provider": "mysql",
+      "driver": "mysql8",
+      "name": "MySQL 8.4 (dev)",
+      "save-password": true,
+      "configuration": {
+        "host": "host.docker.internal",
+        "port": "3307",
+        "database": "GNBPE_DATAHUB",
+        "type": "dev",
+        "auth-model": "native",
+        "auth-properties": { "userName": "datahub", "userPassword": "DataHub_2026.App" },
+        "properties": { "allowPublicKeyRetrieval": "true", "useSSL": "false" }
+      }
+    },
+    "mariadb-dev": {
+      "provider": "mysql",
+      "driver": "mariaDB",
+      "name": "MariaDB 11.4 (dev)",
+      "save-password": true,
+      "configuration": {
+        "host": "host.docker.internal",
+        "port": "3308",
+        "database": "GNBPE_DATAHUB",
+        "type": "dev",
+        "auth-model": "native",
+        "auth-properties": { "userName": "datahub", "userPassword": "DataHub_2026.App" }
+      }
+    },
+    "sqlite-dev": {
+      "provider": "sqlite",
+      "driver": "sqlite_jdbc",
+      "name": "SQLite (datahub.db)",
+      "save-password": false,
+      "configuration": {
+        "configurationType": "URL",
+        "url": "jdbc:sqlite:/data/sqlite/datahub.db",
+        "type": "dev"
+      }
+    },
+    "singlestore-dev": {
+      "provider": "mysql",
+      "driver": "mysql8",
+      "name": "SingleStore (dev)",
+      "save-password": true,
+      "configuration": {
+        "host": "host.docker.internal",
+        "port": "3306",
+        "type": "dev",
+        "auth-model": "native",
+        "auth-properties": { "userName": "root", "userPassword": "singlestore_root_2024" },
+        "properties": { "allowPublicKeyRetrieval": "true", "useSSL": "false" }
+      }
+    }
+  }
+}

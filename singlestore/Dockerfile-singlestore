@@ -1,0 +1,50 @@
+# ============================================================================
+# DOCKERFILE PERSONALIZADO PARA SINGLESTORE
+# ============================================================================
+#
+# Uso:
+#   docker build -t singlestore-custom:latest -f Dockerfile-singlestore .
+#   docker run -d -p 3306:3306 -e SINGLESTORE_ROOT_PASSWORD=mipassword singlestore-custom:latest
+#
+# NOTA: La mayoría de casos NO necesitan Dockerfile personalizado.
+#       Usa docker-compose-singlestore.yml directamente.
+#
+# Usa este Dockerfile solo si necesitas:
+#   - Scripts SQL pre-cargados en la imagen
+#   - Dependencias adicionales del sistema
+#   - Configuración personalizada
+# ============================================================================
+
+FROM singlestore/cluster:latest
+
+# Crear usuario root (requerido por SingleStore)
+USER root
+
+# Instalar herramientas útiles (opcional)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    wget \
+    nano \
+    htop \
+    net-tools \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copiar scripts de inicialización
+COPY init-singlestore.sql /docker-entrypoint-initdb.d/
+RUN chmod 644 /docker-entrypoint-initdb.d/init-singlestore.sql
+
+# Variables de entorno
+ENV SINGLESTORE_ROOT_PASSWORD=singlestore_root_2024
+ENV SINGLESTORE_LICENSE_KEY=""
+
+# Etiquetas
+LABEL maintainer="tu-email@example.com"
+LABEL description="SingleStore con inicialización automática"
+LABEL version="1.0"
+
+# Health check
+HEALTHCHECK --interval=10s --timeout=5s --retries=5 --start-period=30s \
+    CMD curl -f http://localhost:8080/api/v1/health || exit 1
+
+# Punto de entrada (hereda del image base)
+# CMD ["memsqld"]

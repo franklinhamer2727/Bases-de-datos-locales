@@ -1,0 +1,33 @@
+# SQLite: no hay servidor. Este stack crea/migra el archivo y levanta un
+# visor web. El archivo queda en ./data (visible desde Windows a proposito).
+#   docker compose up -d --build   ->  http://localhost:8082
+name: sqlite-dev
+
+services:
+  sqlite:
+    build:
+      context: .
+      args:
+        ALPINE_IMAGE: ${ALPINE_IMAGE:-alpine:3.20}
+    image: bsg/sqlite-datahub:3
+    container_name: sqlite-migrar
+    restart: "no"                  # corre, migra y termina
+    environment:
+      SQLITE_DB: ${SQLITE_DB:-datahub.db}
+      TZ: ${TZ:-America/Lima}
+    volumes:
+      - ./data:/data
+
+  sqlite-web:
+    image: coleifer/sqlite-web:latest
+    container_name: sqlite-web-dev
+    restart: unless-stopped
+    environment:
+      SQLITE_DATABASE: ${SQLITE_DB:-datahub.db}
+    ports:
+      - "${SQLITE_WEB_PORT:-8087}:8080"
+    volumes:
+      - ./data:/data
+    depends_on:
+      sqlite:
+        condition: service_completed_successfully

@@ -1,0 +1,73 @@
+# Redis 8 para desarrollo local.
+#   copy .env.example .env  ->  docker compose up -d --build  ->  docker compose ps (healthy)
+#   RedisInsight (opcional): docker compose --profile tools up -d  ->  http://localhost:5540
+name: redis-dev
+
+services:
+  redis:
+    build:
+      context: .
+      args:
+        REDIS_IMAGE: ${REDIS_IMAGE:-redis:8-alpine}
+    image: bsg/redis-datahub:8
+    container_name: redis-dev
+    hostname: redis-dev
+    restart: unless-stopped
+    command:
+      - redis-server
+      - /usr/local/etc/redis/redis.conf
+      - --requirepass
+      - ${REDIS_PASSWORD:?defina REDIS_PASSWORD en .env}
+      - --maxmemory
+      - ${REDIS_MAXMEMORY:-512mb}
+    environment:
+      REDISCLI_AUTH: ${REDIS_PASSWORD}   # redis-cli (y el healthcheck) se autentican solos
+      TZ: ${TZ:-America/Lima}
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping | grep -q PONG"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    stop_grace_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: ${CONTAINER_MEMORY:-1g}
+    networks:
+      - redis-net
+
+  redisinsight:
+    image: redis/redisinsight:latest
+    container_name: redisinsight-dev
+    profiles: ["tools"]
+    restart: unless-stopped
+    environment:
+      # Pre-registra la conexion (versiones recientes de RedisInsight).
+      RI_REDIS_HOST: redis-dev
+      RI_REDIS_PORT: "6379"
+      RI_REDIS_PASSWORD: ${REDIS_PASSWORD}
+      RI_REDIS_ALIAS: redis-dev
+    ports:
+      - "${REDISINSIGHT_PORT:-5540}:5540"
+    volumes:
+      - redisinsight_data:/data
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - redis-net
+
+volumes:
+  redis_data:
+    name: redis_dev_data
+  redisinsight_data:
+    name: redis_dev_insight
+
+networks:
+  redis-net:
+    name: redis-net

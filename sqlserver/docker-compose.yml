@@ -1,0 +1,61 @@
+# SQL Server 2022 (Developer) para desarrollo local.
+#   1) copy .env.example .env   (y ajuste las passwords)
+#   2) docker compose up -d --build
+#   3) docker compose ps        -> esperar STATUS "healthy"
+name: sqlserver-dev
+
+services:
+  sqlserver:
+    build:
+      context: .
+      args:
+        MSSQL_IMAGE: ${MSSQL_IMAGE:-mcr.microsoft.com/mssql/server:2022-latest}
+    image: bsg/sqlserver-datahub:2022
+    container_name: sqlserver-dev
+    hostname: sqlserver-dev
+    platform: linux/amd64          # la imagen de SQL Server solo existe para amd64
+    restart: unless-stopped
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_PID: ${MSSQL_PID:-Developer}
+      MSSQL_SA_PASSWORD: ${MSSQL_SA_PASSWORD:?defina MSSQL_SA_PASSWORD en .env}
+      MSSQL_MEMORY_LIMIT_MB: ${MSSQL_MEMORY_LIMIT_MB:-2048}
+      MSSQL_COLLATION: ${MSSQL_COLLATION:-SQL_Latin1_General_CP1_CI_AS}   # solo aplica en el primer arranque
+      MSSQL_AGENT_ENABLED: ${MSSQL_AGENT_ENABLED:-false}
+      TZ: ${TZ:-America/Lima}
+      APP_DB: ${APP_DB:-GNBPE_DATAHUB}
+      APP_USER: ${APP_USER:-datahub}
+      APP_PASSWORD: ${APP_PASSWORD:?defina APP_PASSWORD en .env}
+    ports:
+      - "${MSSQL_PORT:-1433}:1433"
+    volumes:
+      # Volumen con nombre, NO bind mount a una carpeta de Windows: el motor
+      # corre como uid 10001 y en carpetas montadas de Windows falla por permisos.
+      - mssql_data:/var/opt/mssql
+    healthcheck:
+      # healthy = motor arriba + init/*.sql aplicados + login de la app funciona
+      test:
+        - CMD-SHELL
+        - >-
+          test -f /tmp/mssql-init.done &&
+          /opt/mssql-tools18/bin/sqlcmd -C -S localhost -U "$$APP_USER" -P "$$APP_PASSWORD"
+          -d "$$APP_DB" -Q "SELECT 1" -b -l 3 -o /dev/null
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+    stop_grace_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: ${CONTAINER_MEMORY:-4g}
+    networks:
+      - sqlserver-net
+
+volumes:
+  mssql_data:
+    name: sqlserver_dev_data
+
+networks:
+  sqlserver-net:
+    name: sqlserver-net

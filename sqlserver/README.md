@@ -16,7 +16,7 @@ Si algo falla: `powershell -ExecutionPolicy Bypass -File .\diagnostico.ps1` (gen
 ## Conectar
 | Cliente | Valor |
 |---|---|
-| Servidor (SSMS / DBeaver / Azure Data Studio) | `localhost,1433` |
+| Servidor (SSMS / DBeaver / Azure Data Studio) | `host.docker.internal,1433` |
 | Usuario app | `datahub` / `APP_PASSWORD` del `.env` (base `GNBPE_DATAHUB`) |
 | Admin | `sa` / `MSSQL_SA_PASSWORD` |
 | Cifrado | marcar **Trust server certificate** (certificado autofirmado) |

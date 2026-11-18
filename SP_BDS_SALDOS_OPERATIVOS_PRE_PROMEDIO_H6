@@ -1,0 +1,389 @@
+/* =====================================================================================
+   PROCEDIMIENTO : dbo.SP_BDS_SALDOS_OPERATIVOS_PRE_PROMEDIO_H6
+   MOTOR         : SQL Server 2016+
+   ORIGEN        : BDS_SALDOS_CIERRE  (+ BDS_CALENDARIOS)
+   DESTINO       : BDS_SALDOS_OPERATIVOS_PRE_PROMEDIO_LIMPIO
+
+   QUÉ HACE
+   -------------------------------------------------------------------------------------
+   Arma una fila diaria por (operación, rubro) para el mes de @FECHA_PROCESO:
+     1. Días no hábiles   -> copia del último día hábil          (TIPO_ORIGEN = 'COPIA_HABIL')
+     2. Hueco al inicio   -> días en 0 antes del primer registro del mes
+     3. Hueco intermedio  -> días en 0 entre dos registros (atributos del último 'ORIGINAL')
+     4. Hueco al final    -> días en 0 después del último registro, hasta fin de mes
+                             o hasta @FECHA_PROCESO, lo que ocurra primero
+
+   CÓMO SE CONTROLA LA MEMORIA (sin WITH RECURSIVE)
+   -------------------------------------------------------------------------------------
+   [M1] Los 3 CTE recursivos (FECHAS_FALTANTES, CALENDARIO) se reemplazan por:
+        - #DIAS: una tabla de días del rango (máx. ~62 filas), generada sin recursión;
+        - #SEGMENTOS: una fila por hueco (desde, hasta, fecha fuente), detectada con
+          LAG/LEAD en una sola pasada.
+        Los días se expanden con JOIN contra #DIAS, una sola vez.
+   [M2] El original expandía el relleno de "inicio de mes" desde el día 1 del mes anterior
+        y después descartaba esos días (≈30 × N filas inútiles). Ahora cada hueco se
+        recorta a [@FECHA_INICIO, @FECHA_FIN] ANTES de expandirlo.
+   [M3] La carga de la base y la réplica de días no hábiles se hacen día por día (bucle
+        de ~31 iteraciones). Cada sentencia ordena y hace hash de un solo día, así que la
+        memoria asignada (memory grant) es chica.
+   [M4] #UNION tiene un índice clustered (ID, RUBRO, FECHA). Las funciones de ventana usan
+        ese orden y no necesitan un SORT del volumen completo.
+   [M5] No se arrastran FECHA_CARGA ni BATCH_ID (el original los borraba al final con
+        ALTER TABLE).
+
+   CAMBIOS FUNCIONALES RESPECTO AL ORIGINAL
+   -------------------------------------------------------------------------------------
+   [C01] El DELETE del destino filtraba solo MONTH(FECHA_PROCESO)=V_MES y FECHA <= V_FECHA_PROCESO,
+         así que borraba el mismo mes de los AÑOS ANTERIORES y no lo volvía a cargar
+         (pérdida de datos). Ahora borra el rango [1.er día del mes, @FECHA_PROCESO].
+   [C02] ANIO / MES salen de la fecha de la fila. Antes, las copias de inicio de mes
+         heredaban el MES del día hábil del mes anterior, y los rellenos quedaban en NULL.
+   [C03] Se quitó la separación EXISTS / NOT EXISTS contra BDS_OPERACIONES: las dos
+         tablas se volvían a unir completas en UNION_ALL_TABLE, así que no filtraba nada.
+   [C04] Duplicados (operación, rubro, fecha) en BDS_SALDOS_CIERRE: antes se elegía uno
+         al azar (SELECT * ... GROUP BY). Ahora se queda el de FECHA_CARGA / BATCH_ID más
+         reciente.  -- VALIDAR
+   [C05] Si @FECHA_PROCESO es NULL, se usa MAX(FECHA_PROCESO) de BDS_SALDOS_CIERRE.
+   [C06] TRY/CATCH + transacción + sp_getapplock + log de ERROR.
+
+   PUNTOS A VALIDAR
+   -------------------------------------------------------------------------------------
+   V1. Orden y nombres de columnas del destino (el original insertaba con SELECT *).
+   V2. Largo de ID_OPERACION_CIERRE (VARCHAR(300)).
+   V3. Criterio de deduplicación [C04].
+   V4. IMPORTANTE: este SP arma ID_OPERACION_CIERRE con
+       EMPRESA|MODULO|SUCURSAL|MONEDA|PAPEL|CUENTA|OPERACION|SUB_OPERACION|TIPO_OPERACION,
+       pero SP_BDS_SALDOS_OPERATIVOS_14 cruza BDS_SALDOS_CIERRE con otra llave
+       (MODULO_PRODUCTO, 3.er dígito del rubro, TIPO_OPERACION_ORIGEN). Confirma que ambas
+       coincidan; si no, los ingresos y gastos del SP_14 no van a cruzar.
+   ===================================================================================== */
+
+CREATE OR ALTER PROCEDURE dbo.SP_BDS_SALDOS_OPERATIVOS_PRE_PROMEDIO_H6
+    @FECHA_PROCESO DATE = NULL
+AS
+BEGIN
+    SET NOCOUNT ON;
+    SET XACT_ABORT ON;
+
+    DECLARE
+        @FECHA_FIN      DATE,
+        @FECHA_INICIO   DATE,          -- último día hábil del mes anterior
+        @INICIO_MES     DATE,          -- 1.er día del mes que se procesa
+        @DIA            DATE,
+        @ORIGEN         DATE,
+        @HABIL          VARCHAR(1),
+        @FILAS          BIGINT = 0,
+        @MSG            NVARCHAR(4000) = NULL,
+        @ID_LOG         BIGINT,
+        @LOCK_RESULT    INT;
+
+    IF @FECHA_PROCESO IS NULL                                           -- [C05]
+        SELECT @FECHA_PROCESO = CAST(MAX(FECHA_PROCESO) AS DATE) FROM dbo.BDS_SALDOS_CIERRE;
+
+    SET @FECHA_FIN  = @FECHA_PROCESO;
+    SET @INICIO_MES = DATEFROMPARTS(YEAR(@FECHA_FIN), MONTH(@FECHA_FIN), 1);
+
+    INSERT INTO dbo.ctl_log_proceso (nom_proceso, tabla_origen, tabla_destino, fec_inicio, estado)
+    VALUES (N'DATAHUB_BDS_SALDOS_OPERATIVOS_PRE_PROMEDIO', N'BDS_SALDOS_CIERRE',
+            N'BDS_SALDOS_OPERATIVOS_PRE_PROMEDIO_LIMPIO', SYSDATETIME(), 'EJECUTANDO');
+    SET @ID_LOG = SCOPE_IDENTITY();
+
+    BEGIN TRY
+
+        /* ==============================================================================
+           1. PARÁMETROS (antes PARAMETROS_TABLA)
+           ============================================================================== */
+        SELECT @FECHA_INICIO = CAST(MAX(C.FEC_CALENDARIO) AS DATE)
+        FROM dbo.BDS_CALENDARIOS C
+        WHERE C.COD_CALENDARIO = 1
+          AND C.IND_DIA_HABIL  = 'S'
+          AND C.FEC_CALENDARIO <= EOMONTH(@FECHA_FIN, -1);
+
+        IF @FECHA_INICIO IS NULL
+            THROW 50001, 'No se encontró el último día hábil del mes anterior en BDS_CALENDARIOS.', 1;
+
+        /* ==============================================================================
+           2. CALENDARIO DEL RANGO y TABLA DE DÍAS  [M1]
+           ============================================================================== */
+        SELECT
+            CAST(FEC_CALENDARIO AS DATE) AS FECHA_PROCESO,
+            IND_DIA_HABIL,
+            MAX(CASE WHEN IND_DIA_HABIL = 'S' THEN CAST(FEC_CALENDARIO AS DATE) END)
+                OVER (ORDER BY FEC_CALENDARIO ROWS UNBOUNDED PRECEDING) AS FECHA_ORIGEN
+        INTO #CALENDARIO
+        FROM dbo.BDS_CALENDARIOS
+        WHERE COD_CALENDARIO = 1
+          AND FEC_CALENDARIO BETWEEN @FECHA_INICIO AND @FECHA_FIN;
+
+        CREATE UNIQUE CLUSTERED INDEX IX_CAL ON #CALENDARIO (FECHA_PROCESO);
+
+        -- Días calendario del rango (sin recursión; ≤ ~62 filas)
+        SELECT TOP (DATEDIFF(DAY, @FECHA_INICIO, @FECHA_FIN) + 1)
+               DATEADD(DAY, ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) - 1, @FECHA_INICIO) AS FECHA
+        INTO #DIAS
+        FROM sys.all_objects;
+
+        CREATE UNIQUE CLUSTERED INDEX IX_DIAS ON #DIAS (FECHA);
+
+        /* ==============================================================================
+           3. #BASE: saldos de los días hábiles, deduplicados, cargados día por día  [M3] [C04]
+           ============================================================================== */
+        SELECT TOP (0)
+            CAST('' AS VARCHAR(300)) AS ID_OPERACION_CIERRE,               -- VALIDAR (V2)
+            CAST(NULL AS DATE)       AS FECHA_PROCESO,
+            c.COD_EMPRESA, c.COD_SUCURSAL, c.COD_RUBRO, c.COD_MONEDA, c.COD_PAPEL, c.PCT_TASA,
+            c.NUM_CUENTA_BT, c.COD_OPERACION, c.COD_EJECUTIVO, c.COD_SUB_OPERACION,
+            c.COD_TIPO_OPERACION, c.COD_MODULO, c.COD_MODULO_PRODUCTO, c.FEC_VENCIMIENTO,
+            c.FEC_VALOR, c.IND_CATEGORIA_RIESGO, c.COD_ACTI_BCO_CENTRAL, c.COD_PRODUCTO,
+            c.MTO_SALDO_ORIGEN, c.MTO_SALDO_MN, c.MTO_SALDO_ME, c.MTO_SALDO_MO,
+            c.MTO_INTERES, c.MTO_PREVISIONES, c.FUENTE
+        INTO #BASE
+        FROM dbo.BDS_SALDOS_CIERRE c;
+
+        CREATE UNIQUE CLUSTERED INDEX IX_BASE ON #BASE (FECHA_PROCESO, ID_OPERACION_CIERRE, COD_RUBRO);
+
+        SET @DIA = (SELECT MIN(FECHA_ORIGEN) FROM #CALENDARIO);
+        WHILE @DIA IS NOT NULL
+        BEGIN
+            INSERT INTO #BASE
+            SELECT
+                s.ID_CALC, @DIA,
+                s.COD_EMPRESA, s.COD_SUCURSAL, s.COD_RUBRO, s.COD_MONEDA, s.COD_PAPEL, s.PCT_TASA,
+                s.NUM_CUENTA_BT, s.COD_OPERACION, s.COD_EJECUTIVO, s.COD_SUB_OPERACION,
+                s.COD_TIPO_OPERACION, s.COD_MODULO, s.COD_MODULO_PRODUCTO, s.FEC_VENCIMIENTO,
+                s.FEC_VALOR, s.IND_CATEGORIA_RIESGO, s.COD_ACTI_BCO_CENTRAL, s.COD_PRODUCTO,
+                s.MTO_SALDO_ORIGEN, s.MTO_SALDO_MN, s.MTO_SALDO_ME, s.MTO_SALDO_MO,
+                s.MTO_INTERES, s.MTO_PREVISIONES, s.FUENTE
+            FROM (
+                SELECT k.ID_CALC, c.*,
+                       ROW_NUMBER() OVER (PARTITION BY k.ID_CALC, c.COD_RUBRO
+                                          ORDER BY c.FECHA_CARGA DESC, c.BATCH_ID DESC) AS RN
+                FROM dbo.BDS_SALDOS_CIERRE c
+                CROSS APPLY (
+                    SELECT CAST(CONCAT(c.COD_EMPRESA, '|', c.COD_MODULO, '|', c.COD_SUCURSAL, '|',
+                                       c.COD_MONEDA, '|', c.COD_PAPEL, '|', c.NUM_CUENTA_BT, '|',
+                                       c.COD_OPERACION, '|', c.COD_SUB_OPERACION, '|',
+                                       c.COD_TIPO_OPERACION) AS VARCHAR(300)) AS ID_CALC
+                ) k
+                WHERE c.FECHA_PROCESO >= @DIA
+                  AND c.FECHA_PROCESO <  DATEADD(DAY, 1, @DIA)
+            ) s
+            WHERE s.RN = 1;
+
+            SET @DIA = (SELECT MIN(FECHA_ORIGEN) FROM #CALENDARIO WHERE FECHA_ORIGEN > @DIA);
+        END;
+
+        /* ==============================================================================
+           4. #UNION: un registro por día calendario (réplica de días no hábiles)  [M3] [C03]
+           ============================================================================== */
+        SELECT TOP (0)
+            b.*,
+            CAST(NULL AS VARCHAR(1))  AS IND_DIA_HABIL,
+            CAST(NULL AS VARCHAR(20)) AS TIPO_ORIGEN
+        INTO #UNION
+        FROM #BASE b;
+
+        CREATE UNIQUE CLUSTERED INDEX IX_UNION ON #UNION (ID_OPERACION_CIERRE, COD_RUBRO, FECHA_PROCESO);  -- [M4]
+
+        SET @DIA = (SELECT MIN(FECHA_PROCESO) FROM #CALENDARIO WHERE FECHA_ORIGEN IS NOT NULL);
+        WHILE @DIA IS NOT NULL
+        BEGIN
+            SELECT @ORIGEN = FECHA_ORIGEN, @HABIL = IND_DIA_HABIL
+            FROM #CALENDARIO WHERE FECHA_PROCESO = @DIA;
+
+            INSERT INTO #UNION
+            SELECT
+                b.ID_OPERACION_CIERRE, @DIA,
+                b.COD_EMPRESA, b.COD_SUCURSAL, b.COD_RUBRO, b.COD_MONEDA, b.COD_PAPEL, b.PCT_TASA,
+                b.NUM_CUENTA_BT, b.COD_OPERACION, b.COD_EJECUTIVO, b.COD_SUB_OPERACION,
+                b.COD_TIPO_OPERACION, b.COD_MODULO, b.COD_MODULO_PRODUCTO, b.FEC_VENCIMIENTO,
+                b.FEC_VALOR, b.IND_CATEGORIA_RIESGO, b.COD_ACTI_BCO_CENTRAL, b.COD_PRODUCTO,
+                b.MTO_SALDO_ORIGEN, b.MTO_SALDO_MN, b.MTO_SALDO_ME, b.MTO_SALDO_MO,
+                b.MTO_INTERES, b.MTO_PREVISIONES, b.FUENTE,
+                @HABIL,
+                CASE WHEN @DIA = @ORIGEN THEN 'ORIGINAL' ELSE 'COPIA_HABIL' END
+            FROM #BASE b
+            WHERE b.FECHA_PROCESO = @ORIGEN;
+
+            SET @DIA = (SELECT MIN(FECHA_PROCESO) FROM #CALENDARIO
+                        WHERE FECHA_PROCESO > @DIA AND FECHA_ORIGEN IS NOT NULL);
+        END;
+
+        DROP TABLE #BASE;   -- libera tempdb antes de los rellenos
+
+        /* ==============================================================================
+           5. #SEGMENTOS: huecos de inicio, intermedio y fin, en UNA pasada  [M1] [M2]
+              (reemplaza DATAHUB_NULL_INICIO_MES, DATAHUB_NULL_INTERMEDIO,
+               DATAHUB_NULL_FIN_MES y los 3 WITH RECURSIVE)
+           ============================================================================== */
+        ;WITH W AS (
+            SELECT
+                u.ID_OPERACION_CIERRE,
+                u.COD_RUBRO,
+                u.FECHA_PROCESO,
+                u.TIPO_ORIGEN,
+                DATEFROMPARTS(YEAR(u.FECHA_PROCESO), MONTH(u.FECHA_PROCESO), 1) AS INICIO_MES,
+                EOMONTH(u.FECHA_PROCESO)                                         AS FIN_MES,
+                LAG (u.FECHA_PROCESO) OVER (PARTITION BY u.ID_OPERACION_CIERRE, u.COD_RUBRO
+                                            ORDER BY u.FECHA_PROCESO) AS FECHA_ANT,
+                LEAD(u.FECHA_PROCESO) OVER (PARTITION BY u.ID_OPERACION_CIERRE, u.COD_RUBRO
+                                            ORDER BY u.FECHA_PROCESO) AS FECHA_SIG,
+                MAX(CASE WHEN u.TIPO_ORIGEN = 'ORIGINAL' THEN u.FECHA_PROCESO END)
+                    OVER (PARTITION BY u.ID_OPERACION_CIERRE, u.COD_RUBRO
+                          ORDER BY u.FECHA_PROCESO ROWS UNBOUNDED PRECEDING)     AS ULT_ORIGINAL
+            FROM #UNION u
+        )
+        SELECT
+            W.ID_OPERACION_CIERRE,
+            W.COD_RUBRO,
+            S.TIPO_RELLENO,
+            CASE WHEN S.DESDE < @FECHA_INICIO THEN @FECHA_INICIO ELSE S.DESDE END AS DESDE,
+            CASE WHEN S.HASTA > @FECHA_FIN    THEN @FECHA_FIN    ELSE S.HASTA END AS HASTA,
+            S.FECHA_FUENTE
+        INTO #SEGMENTOS
+        FROM W
+        CROSS APPLY (VALUES
+            -- INICIO: primer registro del mes después del día 1 (fuente: ese registro, si no es copia)
+            ('INICIO',
+             CASE WHEN (W.FECHA_ANT IS NULL OR W.FECHA_ANT < W.INICIO_MES)
+                       AND W.FECHA_PROCESO > W.INICIO_MES
+                       AND W.TIPO_ORIGEN <> 'COPIA_HABIL'
+                  THEN W.INICIO_MES END,
+             DATEADD(DAY, -1, W.FECHA_PROCESO),
+             W.FECHA_PROCESO),
+            -- INTERMEDIO: salto de más de 1 día dentro del mismo mes (fuente: último ORIGINAL)
+            ('INTERMEDIO',
+             CASE WHEN W.FECHA_SIG <= W.FIN_MES
+                       AND DATEDIFF(DAY, W.FECHA_PROCESO, W.FECHA_SIG) > 1
+                       AND W.ULT_ORIGINAL IS NOT NULL
+                  THEN DATEADD(DAY, 1, W.FECHA_PROCESO) END,
+             DATEADD(DAY, -1, W.FECHA_SIG),
+             W.ULT_ORIGINAL),
+            -- FIN: último registro del mes antes de fin de mes (fuente: ese registro)
+            ('FIN',
+             CASE WHEN (W.FECHA_SIG IS NULL OR W.FECHA_SIG > W.FIN_MES)
+                       AND W.FECHA_PROCESO < W.FIN_MES
+                  THEN DATEADD(DAY, 1, W.FECHA_PROCESO) END,
+             W.FIN_MES,
+             W.FECHA_PROCESO)
+        ) S (TIPO_RELLENO, DESDE, HASTA, FECHA_FUENTE)
+        WHERE S.DESDE IS NOT NULL
+          AND S.DESDE <= @FECHA_FIN
+          AND S.HASTA >= @FECHA_INICIO
+          AND S.DESDE <= S.HASTA;
+
+        /* ==============================================================================
+           6. RELLENOS: se expanden los segmentos contra #DIAS y se insertan en #UNION
+              (antes TEMP_AUXILIAR_INICIO_MES / _INTERMEDIO / _FIN_MES)
+           ============================================================================== */
+        SELECT
+            s.ID_OPERACION_CIERRE, d.FECHA AS FECHA_PROCESO,
+            src.COD_EMPRESA, src.COD_SUCURSAL, src.COD_RUBRO, src.COD_MONEDA, src.COD_PAPEL, src.PCT_TASA,
+            src.NUM_CUENTA_BT, src.COD_OPERACION, src.COD_EJECUTIVO, src.COD_SUB_OPERACION,
+            src.COD_TIPO_OPERACION, src.COD_MODULO, src.COD_MODULO_PRODUCTO, src.FEC_VENCIMIENTO,
+            src.FEC_VALOR, src.IND_CATEGORIA_RIESGO, src.COD_ACTI_BCO_CENTRAL, src.COD_PRODUCTO,
+            0 AS MTO_SALDO_ORIGEN, 0 AS MTO_SALDO_MN, 0 AS MTO_SALDO_ME, 0 AS MTO_SALDO_MO,
+            0 AS MTO_INTERES, 0 AS MTO_PREVISIONES,
+            src.FUENTE,
+            'S'  AS IND_DIA_HABIL,
+            NULL AS TIPO_ORIGEN          -- igual que el original (los rellenos quedaban en NULL)
+        INTO #RELLENO
+        FROM #SEGMENTOS s
+        JOIN #DIAS d
+          ON d.FECHA BETWEEN s.DESDE AND s.HASTA
+        JOIN #UNION src
+          ON src.ID_OPERACION_CIERRE = s.ID_OPERACION_CIERRE
+         AND src.COD_RUBRO           = s.COD_RUBRO
+         AND src.FECHA_PROCESO       = s.FECHA_FUENTE;
+
+        INSERT INTO #UNION
+        SELECT r.*
+        FROM #RELLENO r
+        WHERE NOT EXISTS (SELECT 1 FROM #UNION u
+                          WHERE u.ID_OPERACION_CIERRE = r.ID_OPERACION_CIERRE
+                            AND u.COD_RUBRO           = r.COD_RUBRO
+                            AND u.FECHA_PROCESO       = r.FECHA_PROCESO);
+
+        DROP TABLE #RELLENO;
+        DROP TABLE #SEGMENTOS;
+
+        /* ==============================================================================
+           7. CARGA DEL DESTINO (solo el mes procesado, hasta @FECHA_PROCESO)  [C01]
+           ============================================================================== */
+        BEGIN TRANSACTION;
+
+        EXEC @LOCK_RESULT = sp_getapplock
+             @Resource = 'SP_BDS_SALDOS_OPERATIVOS_PRE_PROMEDIO_H6',
+             @LockMode = 'Exclusive', @LockOwner = 'Transaction', @LockTimeout = 0;
+        IF @LOCK_RESULT < 0
+            THROW 50002, 'SP_BDS_SALDOS_OPERATIVOS_PRE_PROMEDIO_H6 ya se está ejecutando en otra sesión.', 1;
+
+        DELETE FROM dbo.BDS_SALDOS_OPERATIVOS_PRE_PROMEDIO_LIMPIO
+        WHERE FECHA_PROCESO >= @INICIO_MES
+          AND FECHA_PROCESO <  DATEADD(DAY, 1, @FECHA_FIN);
+
+        INSERT INTO dbo.BDS_SALDOS_OPERATIVOS_PRE_PROMEDIO_LIMPIO (     -- VALIDAR (V1)
+            ID_OPERACION_CIERRE, FECHA_PROCESO, COD_EMPRESA, ANIO, MES, COD_SUCURSAL, COD_RUBRO,
+            COD_MONEDA, COD_PAPEL, PCT_TASA, NUM_CUENTA_BT, COD_OPERACION, COD_EJECUTIVO,
+            COD_SUB_OPERACION, COD_TIPO_OPERACION, COD_MODULO, COD_MODULO_PRODUCTO,
+            FEC_VENCIMIENTO, FEC_VALOR, IND_CATEGORIA_RIESGO, COD_ACTI_BCO_CENTRAL, COD_PRODUCTO,
+            MTO_SALDO_ORIGEN, MTO_SALDO_MN, MTO_SALDO_ME, MTO_SALDO_MO, MTO_INTERES, MTO_PREVISIONES,
+            IND_DIA_HABIL, TIPO_ORIGEN, FUENTE
+        )
+        SELECT
+            u.ID_OPERACION_CIERRE, u.FECHA_PROCESO, u.COD_EMPRESA,
+            YEAR(u.FECHA_PROCESO), MONTH(u.FECHA_PROCESO),                      -- [C02]
+            u.COD_SUCURSAL, u.COD_RUBRO,
+            u.COD_MONEDA, u.COD_PAPEL, u.PCT_TASA, u.NUM_CUENTA_BT, u.COD_OPERACION, u.COD_EJECUTIVO,
+            u.COD_SUB_OPERACION, u.COD_TIPO_OPERACION, u.COD_MODULO, u.COD_MODULO_PRODUCTO,
+            u.FEC_VENCIMIENTO, u.FEC_VALOR, u.IND_CATEGORIA_RIESGO, u.COD_ACTI_BCO_CENTRAL, u.COD_PRODUCTO,
+            u.MTO_SALDO_ORIGEN, u.MTO_SALDO_MN, u.MTO_SALDO_ME, u.MTO_SALDO_MO, u.MTO_INTERES, u.MTO_PREVISIONES,
+            u.IND_DIA_HABIL, u.TIPO_ORIGEN, u.FUENTE
+        FROM #UNION u
+        WHERE u.FECHA_PROCESO >= @INICIO_MES
+          AND u.FECHA_PROCESO <= @FECHA_FIN;
+
+        SET @FILAS = @@ROWCOUNT;
+
+        COMMIT TRANSACTION;
+
+        /* ==============================================================================
+           Log de fin
+           ============================================================================== */
+        IF @FILAS = 0
+            SET @MSG = N'No se insertaron registros en BDS_SALDOS_OPERATIVOS_PRE_PROMEDIO_LIMPIO para '
+                     + CONVERT(NVARCHAR(10), @FECHA_FIN, 23) + N'.';
+
+        UPDATE dbo.ctl_log_proceso
+           SET estado           = CASE WHEN @MSG IS NULL THEN 'TERMINADO' ELSE 'WARNING' END,
+               fec_termino      = SYSDATETIME(),
+               filas_insertadas = @FILAS,
+               msg_error        = @MSG
+         WHERE id_log = @ID_LOG;
+
+    END TRY
+    BEGIN CATCH
+        IF @@TRANCOUNT > 0 ROLLBACK TRANSACTION;
+
+        SET @MSG = CONCAT(N'Error ', ERROR_NUMBER(), N' (línea ', ERROR_LINE(), N'): ', ERROR_MESSAGE());
+
+        UPDATE dbo.ctl_log_proceso
+           SET estado = 'ERROR', fec_termino = SYSDATETIME(), msg_error = LEFT(@MSG, 4000)
+         WHERE id_log = @ID_LOG;
+
+        THROW;
+    END CATCH
+END;
+GO
+
+/* ------------------------------------------------------------------------------------
+   Índices recomendados en las tablas físicas
+   ------------------------------------------------------------------------------------
+   CREATE INDEX IX_BSC_FECHA ON dbo.BDS_SALDOS_CIERRE (FECHA_PROCESO);
+   CREATE INDEX IX_CAL_COD   ON dbo.BDS_CALENDARIOS (COD_CALENDARIO, FEC_CALENDARIO) INCLUDE (IND_DIA_HABIL);
+   CREATE INDEX IX_LIMPIO_FECHA ON dbo.BDS_SALDOS_OPERATIVOS_PRE_PROMEDIO_LIMPIO (FECHA_PROCESO);
+
+   Ejecución:
+   EXEC dbo.SP_BDS_SALDOS_OPERATIVOS_PRE_PROMEDIO_H6 @FECHA_PROCESO = '2026-10-31';
+   EXEC dbo.SP_BDS_SALDOS_OPERATIVOS_PRE_PROMEDIO_H6;   -- usa la última fecha de BDS_SALDOS_CIERRE
+   ------------------------------------------------------------------------------------ */
